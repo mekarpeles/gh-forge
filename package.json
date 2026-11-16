@@ -1,7 +1,8 @@
 {
   "name": "github-forge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Locally run GitHub Actions using gh and webhooks.",
+  "main": "index.js",
   "bin": { "forge": "forge.js" },
   "scripts": {
     "start": "node forge.js",
