@@ -8,7 +8,11 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
-const CONFIG_PATH = process.env.FORGE_CONFIG || path.join(__dirname, 'forge.yml');
+// forge.yml is read from FORGE_CONFIG if set, else <FORGE_HOME>/forge.yml
+// (FORGE_HOME defaults to cwd) — so a library consumer's own forge.yml is used,
+// not this package's. Matches the FORGE_HOME resolution in forge.js/record.js.
+const HOME = path.resolve(process.env.FORGE_HOME || process.cwd());
+const CONFIG_PATH = process.env.FORGE_CONFIG || path.join(HOME, 'forge.yml');
 
 function interpolate(v) {
   if (typeof v === 'string') return v.replace(/\$\{(\w+)\}/g, (_, k) => process.env[k] ?? '');
