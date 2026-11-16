@@ -76,3 +76,23 @@ test('record writes to <FORGE_HOME>/logs/events.jsonl and returns the record', (
 
   delete process.env.FORGE_HOME;
 });
+
+test('config loads forge.yml from FORGE_HOME (not the package dir)', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-home-'));
+  fs.writeFileSync(
+    path.join(home, 'forge.yml'),
+    'repo: ${MY_R}\nevents: [issues]\nroutes:\n  - on: issues\n    run: jobs/x.js\n'
+  );
+  process.env.FORGE_HOME = home;
+  process.env.MY_R = 'owner/name';
+  delete require.cache[require.resolve('../config')];
+  const { load } = require('../config');
+
+  const cfg = load();
+  assert.equal(cfg.repo, 'owner/name');
+  assert.equal(cfg.routes.length, 1);
+  assert.equal(cfg.routes[0].run, 'jobs/x.js');
+
+  delete process.env.FORGE_HOME;
+  delete process.env.MY_R;
+});
