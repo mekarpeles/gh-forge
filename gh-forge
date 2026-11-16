@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# gh extension entrypoint. Installed with `gh extension install mekarpeles/gh-forge`,
+# this makes `gh forge <args>` run the gh-forge CLI — sugar over the standalone
+# `gh-forge` binary. Everything lives in bin/gh-forge.js.
+exec node "$(dirname "$0")/bin/gh-forge.js" "$@"
