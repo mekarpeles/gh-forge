@@ -1,9 +1,9 @@
 {
-  "name": "github-forge",
-  "version": "0.3.0",
-  "description": "Locally run GitHub Actions using gh and webhooks.",
+  "name": "gh-forge",
+  "version": "0.4.0",
+  "description": "Locally run GitHub Actions using gh and webhooks — an engine (library) plus a daemon/CLI to run furnaces (projects) on it.",
   "main": "index.js",
-  "bin": { "forge": "forge.js" },
+  "bin": { "forge": "forge.js", "gh-forge": "bin/gh-forge.js" },
   "scripts": {
     "start": "node forge.js",
     "forward": "./forward.sh",
