@@ -70,3 +70,31 @@ test('tick does NOT run a schedule route when the cron does not match', async ()
   assert.equal(fs.existsSync(marker), false);
   delete process.env.FORGE_HOME;
 });
+
+// --- listWorkflows: the two buckets (event vs schedule) ---------------------
+
+test('listWorkflows classifies each route as event or schedule', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-list-'));
+  fs.writeFileSync(
+    path.join(home, 'forge.yml'),
+    'repo: owner/name\nroutes:\n' +
+      '  - on: pull_request.closed\n    run: jobs/a.js\n' +
+      '  - on: pull_request.labeled\n    run: jobs/b.js\n    config:\n      label: "Needs: x"\n' +
+      '  - on: schedule\n    cron: "0 * * * *"\n    run: jobs/c.js\n'
+  );
+  process.env.FORGE_HOME = home;
+  for (const m of ['../forge', '../config']) delete require.cache[require.resolve(m)];
+  const { listWorkflows } = require('../forge');
+
+  const wf = listWorkflows();
+  assert.equal(wf.length, 3);
+  assert.equal(wf.filter((w) => w.trigger === 'event').length, 2);
+  assert.equal(wf.filter((w) => w.trigger === 'schedule').length, 1);
+  const sched = wf.find((w) => w.trigger === 'schedule');
+  assert.equal(sched.cron, '0 * * * *');
+  assert.equal(sched.run, 'jobs/c.js');
+  const labeled = wf.find((w) => w.label);
+  assert.equal(labeled.label, 'Needs: x');
+
+  delete process.env.FORGE_HOME;
+});

@@ -200,6 +200,21 @@ the webhook server: `node forge.js` starts both, and a library consumer calls
 process is down are skipped (GitHub's schedule is best-effort too). `on: schedule`
 routes never match a webhook event, so existing event routes are untouched.
 
+### Listing workflows
+
+`forge list` prints every configured route grouped by trigger — the local
+`gh workflow list`. A workflow's trigger is either an **event** (webhook) or a
+**schedule** (cron):
+
+```
+EVENT (webhook)
+  pull_request.closed      jobs/pr-merged-cleanup.js
+SCHEDULE (cron)
+  0 * * * *                jobs/label-conflicts.js
+```
+
+`listWorkflows()` is also exported for programmatic use.
+
 ## Tests
 
 ```bash

@@ -162,7 +162,42 @@ function createServer() {
   });
 }
 
+// List the configured workflows (routes) with their trigger — the local
+// equivalent of `gh workflow list`. Returns structured rows; the CLI prints them.
+function listWorkflows() {
+  return (load().routes || [])
+    .filter((r) => r.run)
+    .map((r) => ({
+      trigger: r.on === 'schedule' ? 'schedule' : 'event',
+      on: r.on,
+      cron: r.cron || null,
+      run: r.run,
+      label: (r.config && r.config.label) || null,
+    }));
+}
+
+function printWorkflows() {
+  const wf = listWorkflows();
+  const pad = (s, n) => s + ' '.repeat(Math.max(1, n - s.length));
+  log(`workflows in ${require('./config').CONFIG_PATH} — ${wf.length} total`);
+  const event = wf.filter((w) => w.trigger === 'event');
+  const sched = wf.filter((w) => w.trigger === 'schedule');
+  if (event.length) {
+    console.log('\nEVENT (webhook)');
+    for (const w of event) console.log('  ' + pad(w.on + (w.label ? ` [${w.label}]` : ''), 46) + w.run);
+  }
+  if (sched.length) {
+    console.log('\nSCHEDULE (cron)');
+    for (const w of sched) console.log('  ' + pad(w.cron || '?', 46) + w.run);
+  }
+  if (!wf.length) console.log('(none)');
+}
+
 if (require.main === module) {
+  if (process.argv[2] === 'list') {
+    printWorkflows();
+    process.exit(0);
+  }
   createServer().listen(PORT, '127.0.0.1', () => {
     log(`forge listening on http://127.0.0.1:${PORT}`);
     log(`forge home: ${HOME}`);
@@ -172,4 +207,4 @@ if (require.main === module) {
   require('./scheduler').startScheduler();
 }
 
-module.exports = { verify, resolve, resolveAll, makeContext, dispatch, createServer, HOME };
+module.exports = { verify, resolve, resolveAll, makeContext, dispatch, createServer, listWorkflows, HOME };
