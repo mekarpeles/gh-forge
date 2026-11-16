@@ -135,6 +135,30 @@ module.exports = async (ctx) => {
 `execFile` (e.g. `{ env, cwd }`), so a job can act as a different identity or in
 another directory.
 
+## Install (`gh forge`)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mekarpeles/gh-forge/main/install.sh | bash
+```
+
+Gets `gh forge` working — installs any missing prerequisites (git, node ≥ 18, gh,
+the `gh webhook` extension) and the `gh-forge` extension itself. Manual equivalent:
+
+```bash
+gh extension install cli/gh-webhook        # forwarder transport
+gh extension install mekarpeles/gh-forge   # -> `gh forge`
+```
+
+Then run a project on it — a **furnace**, i.e. a directory with `forge.yml` +
+`jobs/` + `.env` (install `gh-forge` as a dependency in that project so its jobs
+resolve `require('gh-forge')`):
+
+```bash
+gh forge add myproj /path/to/project   # register it
+gh forge up  myproj                    # engine + scheduler + forwarder, supervised
+gh forge ls                            # furnaces + status · gh forge logs myproj
+```
+
 ## Use as a library
 
 The engine resolves `forge.yml`, `jobs/`, and `logs/` against a **forge home**
