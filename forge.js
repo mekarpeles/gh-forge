@@ -7,6 +7,11 @@
  * It listens on localhost, verifies each delivery's signature, and runs the
  * job wired to that event in forge.yml. Config and jobs are reloaded on every
  * delivery, so you can edit either and the next event picks up the change.
+ *
+ * Forge home. forge.yml and job paths resolve against FORGE_HOME (default: the
+ * current working directory). Run `node forge.js` from your project and it just
+ * works; install forge as a library and set FORGE_HOME to your project root so
+ * the engine runs YOUR forge.yml + jobs/ without vendoring the engine.
  */
 
 const http = require('http');
@@ -18,7 +23,9 @@ const { load } = require('./config');
 
 const PORT = parseInt(process.env.FORGE_PORT || '3000', 10);
 const SECRET = process.env.FORGE_SECRET || '';
-const ROOT = __dirname;
+// Where forge.yml + jobs/ live. Default cwd so standalone `node forge.js` from a
+// project dir works; a library consumer sets FORGE_HOME to its own root.
+const HOME = path.resolve(process.env.FORGE_HOME || process.cwd());
 
 function log(...a) {
   console.log(`[${new Date().toISOString()}]`, ...a);
@@ -35,11 +42,13 @@ function verify(raw, sig, secret = SECRET) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// The object every job receives.
+// The object every job receives. `run`/`gh` take an optional opts object (passed
+// through to execFile), e.g. { env, cwd } — so a job can run a command as a
+// different identity or in another directory.
 function makeContext(event, action, payload, config) {
-  const run = (cmd, args = []) =>
+  const run = (cmd, args = [], opts = {}) =>
     new Promise((resolve) => {
-      execFile(cmd, args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) =>
+      execFile(cmd, args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, ...opts }, (err, stdout, stderr) =>
         resolve({ code: err ? err.code || 1 : 0, stdout, stderr })
       );
     });
@@ -52,43 +61,75 @@ function makeContext(event, action, payload, config) {
     repo: payload.repository && payload.repository.full_name,
     sender: payload.sender && payload.sender.login,
     log: (...a) => log('  ↳', ...a),
-    run, // run any local command
-    gh: (args) => run('gh', args), // act back on GitHub
+    run, // run any local command: run(cmd, args, opts?)
+    gh: (args, opts) => run('gh', args, opts), // act back on GitHub
   };
 }
 
-// Resolve a handler for an event/action: a forge.yml route first (exact
-// "event.action", then bare "event"), else the jobs/<event>.<action>.js
-// filename convention. Returns { file, config } or null.
-function resolve(routes, event, action) {
+// Resolve ALL handlers for an event/action: every forge.yml route whose `on`
+// matches the exact "event.action" (or, if none do, the bare "event"), else the
+// jobs/<event>.<action>.js filename convention. Returns an array of
+// { file, config } — usually one, but several routes may share a key (e.g. two
+// `pull_request.labeled` routes split by the `label:` discriminator below).
+//
+// Label discriminator: on labeled/unlabeled events, a route may pin
+// `config.label` so it only runs for that one label. Routes without `label`
+// match any label. The filter is skipped when no payload is given, so resolve()
+// stays usable as a pure route lookup. Job paths resolve against FORGE_HOME.
+function resolveAll(routes, event, action, payload) {
   const key = action ? `${event}.${action}` : event;
-  const route = routes.find((r) => r.on === key) || routes.find((r) => r.on === event);
-  const files = route
-    ? [route.run]
-    : [path.join('jobs', `${key}.js`), path.join('jobs', `${event}.js`)];
-  for (const rel of files) {
-    if (!rel) continue;
-    const p = path.isAbsolute(rel) ? rel : path.join(ROOT, rel);
-    if (fs.existsSync(p)) return { file: p, config: route && route.config };
+  const matchLabel = (r) => {
+    if (!r.config || !r.config.label) return true;
+    if (action !== 'labeled' && action !== 'unlabeled') return true;
+    if (!payload || !payload.label) return true; // no context: don't filter
+    return payload.label.name === r.config.label;
+  };
+  // Exact event.action routes first; fall back to bare-event routes only if no
+  // exact route matched (preserves "specific wins over general").
+  let matched = (routes || []).filter((r) => r.on === key && matchLabel(r));
+  if (!matched.length) matched = (routes || []).filter((r) => r.on === event && matchLabel(r));
+
+  const hits = [];
+  for (const r of matched) {
+    if (!r.run) continue;
+    const p = path.isAbsolute(r.run) ? r.run : path.join(HOME, r.run);
+    if (fs.existsSync(p)) hits.push({ file: p, config: r.config });
   }
-  return null;
+  // No configured route at all -> jobs/<event>.<action>.js filename convention.
+  if (!hits.length && !matched.length) {
+    for (const rel of [path.join('jobs', `${key}.js`), path.join('jobs', `${event}.js`)]) {
+      const p = path.join(HOME, rel);
+      if (fs.existsSync(p)) {
+        hits.push({ file: p, config: undefined });
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+// Back-compat single-route lookup: the first matching handler, or null.
+function resolve(routes, event, action, payload) {
+  return resolveAll(routes, event, action, payload)[0] || null;
 }
 
 async function dispatch(event, action, payload) {
   const key = action ? `${event}.${action}` : event;
-  const hit = resolve(load().routes, event, action);
-  if (!hit) {
+  const hits = resolveAll(load().routes, event, action, payload);
+  if (!hits.length) {
     log(`• ${key} — no route, ignored`);
     return;
   }
-  log(`▶ ${key} — ${path.relative(ROOT, hit.file)}`);
-  try {
-    delete require.cache[require.resolve(hit.file)]; // hot reload
-    const job = require(hit.file);
-    await job(makeContext(event, action, payload, hit.config));
-    log(`✓ ${key} — done`);
-  } catch (err) {
-    log(`✗ ${key} — ${err.stack || err}`);
+  for (const hit of hits) {
+    log(`▶ ${key} — ${path.relative(HOME, hit.file)}`);
+    try {
+      delete require.cache[require.resolve(hit.file)]; // hot reload
+      const job = require(hit.file);
+      await job(makeContext(event, action, payload, hit.config));
+      log(`✓ ${key} — done`);
+    } catch (err) {
+      log(`✗ ${key} — ${err.stack || err}`);
+    }
   }
 }
 
@@ -124,8 +165,9 @@ function createServer() {
 if (require.main === module) {
   createServer().listen(PORT, '127.0.0.1', () => {
     log(`forge listening on http://127.0.0.1:${PORT}`);
+    log(`forge home: ${HOME}`);
     log(SECRET ? 'signature verification: ON' : 'signature verification: OFF (no FORGE_SECRET)');
   });
 }
 
-module.exports = { verify, resolve, makeContext, dispatch, createServer };
+module.exports = { verify, resolve, resolveAll, makeContext, dispatch, createServer, HOME };

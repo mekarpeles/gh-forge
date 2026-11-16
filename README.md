@@ -131,7 +131,40 @@ module.exports = async (ctx) => {
 ```
 
 `ctx`: `event`, `action`, `payload`, `config`, `repo`, `sender`, `log(...)`,
-`run(cmd, args)`, `gh(args)`.
+`run(cmd, args, opts?)`, `gh(args, opts?)`. `run`/`gh` forward `opts` to
+`execFile` (e.g. `{ env, cwd }`), so a job can act as a different identity or in
+another directory.
+
+## Use as a library
+
+The engine resolves `forge.yml`, `jobs/`, and `logs/` against a **forge home**
+(`FORGE_HOME`, default: the current working directory). So instead of cloning
+this repo and adding your wiring to it, you can **install github-forge** and keep
+your own `forge.yml` + `jobs/` in your project — the engine stays a dependency,
+your configuration stays yours:
+
+```jsonc
+// your project's package.json
+{ "dependencies": { "github-forge": "github:OWNER/github-forge" } }
+```
+
+```js
+// your project's entrypoint — boot the engine against your project root
+process.env.FORGE_HOME = __dirname;
+require('github-forge').createServer().listen(process.env.FORGE_PORT || 3000, '127.0.0.1');
+```
+
+```js
+// your jobs get the shared recorder from the package
+const { record } = require('github-forge');
+module.exports = async (ctx) => { record(ctx); /* … */ };
+```
+
+The package also exports `makeContext`, `dispatch`, `resolveAll`, `resolve`,
+`verify`, and `load` — enough to replay a synthetic payload in a test harness
+without a live webhook. github-forge itself ships only a generic demo `forge.yml`;
+a consumer's `FORGE_HOME` config always governs, so **the engine never imposes
+which webhooks you turn on — your project does.**
 
 ## Recipes
 
