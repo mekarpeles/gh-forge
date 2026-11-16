@@ -12,7 +12,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
-const { spawn } = require('child_process');
+const crypto = require('crypto');
+const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..'); // the gh-forge repo (holds supervise.js)
 const CFG = path.join(os.homedir(), '.config', 'gh-forge');
@@ -42,12 +43,88 @@ function portUp(port, cb) {
 }
 
 function add(name, p) {
-  if (!name || !p) die('usage: gh-forge add <name> <path>');
-  const abs = path.resolve(p);
-  if (!fs.existsSync(path.join(abs, 'forge.yml'))) die(`no forge.yml in ${abs}`);
+  if (!name) die('usage: gh-forge add <name> [path]   (path defaults to the current dir)');
+  const abs = path.resolve(p || process.cwd());
+  if (!fs.existsSync(path.join(abs, 'forge.yml'))) die(`no forge.yml in ${abs} — run \`gh-forge init\` to scaffold one`);
   const repo = envOf(path.join(abs, '.env')).FORGE_REPO || '';
   const r = reg(); r.furnaces[name] = { path: abs, repo }; saveReg(r);
   console.log(`added furnace ${name} -> ${abs} (${repo || 'repo?'})`);
+}
+
+// --- init: auth + scaffold a furnace in place, then register it ---------------
+const sh = (cmd, args, opts) => spawnSync(cmd, args, { encoding: 'utf8', ...opts });
+const shI = (cmd, args, opts) => spawnSync(cmd, args, { stdio: 'inherit', ...opts });
+
+function detectRepo(dir) {
+  const r = sh('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], { cwd: dir });
+  return r.status === 0 ? (r.stdout || '').trim() : '';
+}
+
+// Ensure gh is logged in AND has admin:repo_hook (needed to create the forward hook).
+function ensureAuth() {
+  let s = sh('gh', ['auth', 'status']);
+  if (s.status !== 0) {
+    console.log('  gh not authenticated — launching `gh auth login`');
+    shI('gh', ['auth', 'login']);
+    s = sh('gh', ['auth', 'status']);
+  }
+  const scopes = (s.stdout || '') + (s.stderr || '');
+  if (!/admin:repo_hook/.test(scopes)) {
+    console.log('  granting the admin:repo_hook scope (needed to forward webhooks)');
+    shI('gh', ['auth', 'refresh', '-h', 'github.com', '-s', 'admin:repo_hook']);
+  }
+}
+
+function freePort() {
+  const used = new Set();
+  for (const f of Object.values(reg().furnaces)) {
+    const p = envOf(path.join(f.path, '.env')).FORGE_PORT;
+    if (p) used.add(parseInt(p, 10));
+  }
+  let p = 3000; while (used.has(p)) p++; return p;
+}
+
+function init(name, p) {
+  const dir = path.resolve(p || process.cwd());
+  name = name || path.basename(dir);
+  ensure();
+  console.log(`init furnace '${name}' in ${dir}`);
+
+  ensureAuth();
+
+  const envPath = path.join(dir, '.env');
+  let repo = envOf(envPath).FORGE_REPO || detectRepo(dir);
+
+  // .env — generate if absent; never clobber an existing one.
+  if (!fs.existsSync(envPath)) {
+    const secret = crypto.randomBytes(20).toString('hex');
+    const port = freePort();
+    fs.writeFileSync(envPath,
+      '# gh-forge furnace config — holds the webhook signing secret; keep out of git.\n' +
+      `FORGE_SECRET=${secret}\n` +
+      `FORGE_PORT=${port}\n` +
+      `FORGE_REPO=${repo}\n` +
+      'FORGE_EVENTS=issues,pull_request,issue_comment\n');
+    console.log(`  wrote .env (repo=${repo || '?'}, port=${port}, secret generated)`);
+  } else {
+    console.log('  .env exists — left as-is');
+  }
+
+  // keep .env/logs/node_modules out of git.
+  const giPath = path.join(dir, '.gitignore');
+  const gi = fs.existsSync(giPath) ? fs.readFileSync(giPath, 'utf8') : '';
+  if (!/^\.env$/m.test(gi)) {
+    fs.appendFileSync(giPath, (gi && !gi.endsWith('\n') ? '\n' : '') + '.env\nlogs/\nnode_modules/\n');
+    console.log('  added .env / logs/ / node_modules/ to .gitignore');
+  }
+
+  if (!fs.existsSync(path.join(dir, 'forge.yml'))) {
+    console.log(`  note: no forge.yml yet — add one (your workflows), then \`gh-forge up ${name}\``);
+  }
+  if (!repo) console.log('  note: repo not detected — set FORGE_REPO in .env');
+
+  const r = reg(); r.furnaces[name] = { path: dir, repo }; saveReg(r);
+  console.log(`\n✓ furnace '${name}' registered. Start it:  gh-forge up ${name}`);
 }
 
 function rm(name) { down(name); const r = reg(); delete r.furnaces[name]; saveReg(r); console.log(`removed furnace ${name}`); }
@@ -111,6 +188,7 @@ function logs(name) {
 
 const [cmd, a, b] = process.argv.slice(2);
 switch (cmd) {
+  case 'init': init(a, b); break;
   case 'add': add(a, b); break;
   case 'rm': rm(a); break;
   case 'up': up(a); break;
@@ -123,7 +201,8 @@ switch (cmd) {
   default:
     console.log(`gh-forge — run furnaces on the gh-forge engine
 
-  gh-forge add <name> <path>   register a furnace (a dir with forge.yml + .env)
+  gh-forge init [name] [path]  auth + generate .env, then register (path defaults to cwd)
+  gh-forge add  <name> [path]  register an existing furnace (path defaults to cwd)
   gh-forge rm   <name>         unregister (stops it first)
   gh-forge up   <name>         start a furnace (engine + forwarder, supervised, detached)
   gh-forge down <name>         stop a furnace
