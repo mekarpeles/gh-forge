@@ -180,6 +180,26 @@ their jobs in [`examples/`](examples/). Copy what you want into `forge.yml`.
 | a PR is merged (not just closed)         | `pull_request.closed`                                           | only when `payload.pull_request.merged` is true |
 | CI fails on a PR                         | `check_run.completed`                                          | act only when `conclusion === 'failure'` (add `check_run` to `events:`) |
 
+## Scheduled workflows (`on: schedule`)
+
+Besides webhook events, a route can fire on a **cron schedule** — the time-based
+trigger, mirroring GitHub Actions' `on: schedule`. UTC, standard 5-field cron:
+
+```yaml
+routes:
+  - on: schedule
+    cron: "0 * * * *"      # hourly, UTC
+    run: jobs/nightly.js
+```
+
+A minute-aligned loop re-reads `forge.yml` each tick and runs every `on: schedule`
+route whose `cron` matches, through the **same `job(ctx)` path** as webhooks (with
+a synthetic `schedule` payload; `ctx.event === 'schedule'`). It runs **alongside**
+the webhook server: `node forge.js` starts both, and a library consumer calls
+`startScheduler()` next to `createServer().listen()`. Missed ticks while the
+process is down are skipped (GitHub's schedule is best-effort too). `on: schedule`
+routes never match a webhook event, so existing event routes are untouched.
+
 ## Tests
 
 ```bash

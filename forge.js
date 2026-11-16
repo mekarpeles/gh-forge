@@ -168,6 +168,8 @@ if (require.main === module) {
     log(`forge home: ${HOME}`);
     log(SECRET ? 'signature verification: ON' : 'signature verification: OFF (no FORGE_SECRET)');
   });
+  // Run `on: schedule` routes alongside the webhook server (no-op if there are none).
+  require('./scheduler').startScheduler();
 }
 
 module.exports = { verify, resolve, resolveAll, makeContext, dispatch, createServer, HOME };
